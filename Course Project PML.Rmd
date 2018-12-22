@@ -1,0 +1,87 @@
+---
+title: 'Peer-graded Assignment: Prediction Assignment Writeup'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Reading, and preprocessing the data
+I begin by loading the necessary packages, reading the data into R, and looking at the dimensions of the data
+```{r, warning = F, message = F}
+library(caret); library(randomForest)
+```
+```{r}
+# Read the training data
+dat <- read.csv('pml-training.csv')
+# look at dimensions
+dim(dat)
+```
+Given the large amount of variables in this dataset, I'll avoid providing a summary for each variable. Suffice to say that before this dataset can be used as input for a machine learning algorithm some preprocessing needs to be done.
+
+First, some of the variables in the data frame aren't useful as predictors, such as user name and the timestamps. I therefore remove these columns from the dataset, so we only keep those that can be expected to have any predictive value, as well as the y variable classe. 
+
+Second, some of the variables are factor variables even though they should obviously be numeric. Since all predictor variables appear to be numeric or integer, all columns except the outcome variable are converted to numeric.
+
+Third, we have to deal with a lot of NA values. Since these are presumably caused by the fact that only a subset of variables is relevant for each exercise, I won't attempt to impute these values but will instead replace them with 0.
+
+Fourth, some columns contain no useful information at all. These columns have variance 0. I'll filter these out.
+```{r, warning = F, message = F}
+# Remove columns that are unfit as predictors
+dat <- dat[,-(1:7)]
+# Convert all columns except classe to numeric, then add classe column back
+dat1 <- apply(dat[,-153], 2, as.numeric)
+dat1 <- as.data.frame(dat1)
+dat <- cbind(dat1, dat$classe)
+names(dat)[153] <- 'classe'
+# Replace NA values with 0
+dat[is.na(dat)] <- 0
+# Compute variance for each column except classe, check which are 0, and remove these from dataset
+zerovar <- apply(dat[,-153], 2, var)
+zerovar <- which(zerovar == 0)
+dat <- dat[,-zerovar]
+```
+
+### Model training and prediction
+
+In order to be able to conduct cross validation I make use of the data slicing technique to split the dataset into a training set and a validation set. This also enables me to later estimate out of sample error.
+```{r}
+set.seed(12345)
+inTrain <- createDataPartition(y = dat$classe, p = .7, list = F)
+training <- dat[inTrain,]
+validation <- dat[-inTrain,]
+```
+Next, we need to find some prediction model appropriate for this dataset. Since the outcomes are unordered factor variables, linear models won't work well here. Prediction models like boosting or random forest might be able to do the trick. Given the large amount of data I picked the random forest model since it computes a bit faster. To keep the computational time limited, I set the number of trees at 50.
+```{r, cache = TRUE}
+set.seed(234)
+rf <- randomForest(classe ~ ., data = training, prox = T, ntree = 50)
+```
+Let's check how accurate the prediction model is on the training set by computing the in sample error, which means subtracting the accuracy from 1.
+```{r}
+1 - confusionMatrix(training$classe, predict(rf, training))$overall['Accuracy']
+```
+It turns out this is about zero, which seems good, but may be caused by overfitting. I'll therefore estimate the out of sample error by predicting on the validation set, and comparing it to the true class.
+```{r}
+1 - confusionMatrix(validation$classe, predict(rf, validation))$overall['Accuracy']
+```
+It turns out we estimate the out of sample error at about 1%, which is good enough for our purposes. I might reduce the out of sample error further by increasing the number of trees in the model, but the current setup seems to offer a good trade-off between computational time and accuracy.
+
+The next step is to apply the prediction model to the test set. First I'll make sure the test set has the same variables and variable classes as the training and validation sets.
+```{r}
+# Read the test set
+test <- read.csv('pml-testing.csv')
+# remove the same columns that I previously removed from training set, plus the last column which is unique to test dataset
+test <- test[,-(1:7)]
+test <- test[,-zerovar]
+test <- test[,-144]
+# convert all columns to numeric
+test <- apply(test, 2, as.numeric)
+test <- as.data.frame(test)
+# Replace NA values with 0
+test[is.na(test)] <- 0
+```
+Now that the structure of the test set is the same as those of the training and validation sets, I can apply the prediction model to the test set. The predictions are stored in the object predictions, which will be submitted.
+```{r}
+predictions <- predict(rf, test)
+```
